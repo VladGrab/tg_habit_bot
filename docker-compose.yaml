@@ -1,0 +1,47 @@
+services:
+  # Сервис API (FastAPI)
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - tg_bot/.env
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - TZ=Europe/Moscow
+      - PYTHONASYNCIODEBUG=1
+
+  # Сервис TG bot
+  bot:
+    build: .
+    command: python tg_bot/main.py
+    env_file:
+      - tg_bot/.env
+    restart: always
+    depends_on:
+      - api
+
+  # Сервис Postgres
+  postgres:
+    container_name: postgres-container
+    image: postgres
+    environment:
+      - POSTGRES_DB=habit_bot_tg
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=mysecretpassword
+      - log_destination=stderr
+      - logging_collector=on
+      - log_directory=./db/:/var/lib/postgresql/logs
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./db/:/var/lib/postgresql
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d habit_bot_tg" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
