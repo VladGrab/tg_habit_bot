@@ -1,7 +1,6 @@
 import os
 from dotenv import load_dotenv
 from tg_bot.main import dotenv_path
-import hashlib
 import hmac
 import logging
 from contextlib import asynccontextmanager
@@ -13,7 +12,7 @@ from sqlalchemy.orm import Session
 import jwt
 
 from db.models import User
-from .schemas import AddHabit, UserData, EditHabitName, GetHabit, GetHabitId, DeleteHab, EditTime, CountData, PayLoad
+from .schemas import AddHabit, UserData, EditHabitName, GetHabit, GetHabitId, DeleteHab, EditTime, CountData
 from db import db, crud
 from tg_bot.main import send_message_test
 
