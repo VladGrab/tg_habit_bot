@@ -45,3 +45,8 @@ uvicorn = "0.41.0"
 [build-system]
 requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.alembic]
+script_location = "db/migrations"
+prepend_sys_path = ".."
+sqlalchemy.url = "postgresql+asyncpg://postgres:mysecretpassword@postgres:5432/habit_bot_tg"

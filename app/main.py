@@ -1,30 +1,28 @@
-import os
-from dotenv import load_dotenv
-from tg_bot.main import dotenv_path
-import hashlib
 import hmac
 import logging
 from contextlib import asynccontextmanager
-import datetime
 import uvicorn as uvicorn
-from fastapi import FastAPI, Depends, HTTPException
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import FastAPI, Depends, HTTPException, Response
+from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 import jwt
+from starlette.responses import JSONResponse
 
+from app.utils import create_token
 from db.models import User
-from .schemas import AddHabit, UserData, EditHabitName, GetHabit, GetHabitId, DeleteHab, EditTime, CountData, PayLoad
+from .schemas import AddHabit, UserData, EditHabitName, GetHabits, GetHabitId, EditTime, HabitId
+from .scheduler import scheduler, add_reminder, update_name_reminder, update_time_reminder, delete_reminder
+from app import settings
 from db import db, crud
-from tg_bot.main import send_message_test
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Запуск планировщика
-    db.scheduler.start()
+    scheduler.start()
     yield
     # Остановка при выключении сервера
-    db.scheduler.shutdown()
+    scheduler.shutdown()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -36,17 +34,15 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-
-auth_scheme = HTTPBearer()
-load_dotenv(dotenv_path=dotenv_path)
-SECRET_KEY = os.environ.get("SECRET_KEY")
-ACCESS_TOKEN_EXPIRE_MINUTES = os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES")
-ALGORITHM = os.environ.get("ALGORITHM")
-COUNT_COMPLETE_HABIT = 20  # назначать с учетом в -1 от требуемого значения
+auth_scheme = settings.auth_scheme
+SECRET_KEY = settings.SECRET_KEY
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+ALGORITHM = settings.ALGORITHM
+COUNT_COMPLETE_HABIT = settings.COUNT_COMPLETE_HABIT
 
 
 async def get_current_user(auth: HTTPAuthorizationCredentials = Depends(auth_scheme),
-                     session: Session = Depends(db.get_async_session)):
+                           session: Session = Depends(db.get_async_session)):
     token = auth.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -74,16 +70,14 @@ async def check_user(user_data: UserData, session: Session = Depends(db.get_asyn
         user_data.password_hash = str(user_data.password)
         logger.info(user_data)
         await crud.add_user(session, user_data=user_data)
+        token = create_token(user_id=user_data.id_telegram)
+        return token
     else:
         logger.info("User is exists")
-        hash_p_user = await crud.get_user_hash(session=session, id_telegram=user_data.id_telegram)
+        hash_in_db_user = await crud.get_user_hash(session=session, id_telegram=user_data.id_telegram)
         input_hash = user_data.password
-        result = hmac.compare_digest(str(input_hash), hash_p_user)
-        payload = {
-            "sub": str(user_data.id_telegram),
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
-        }
-        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        result = hmac.compare_digest(str(input_hash), hash_in_db_user)
+        token = create_token(user_id=user_data.id_telegram)
         if result is True:
             return token
         elif result is False:
@@ -107,132 +101,111 @@ async def add_user(user_data: UserData, session: Session = Depends(db.get_async_
 async def add_habit(habit_data: AddHabit,
                     user: User = Depends(get_current_user),
                     session: Session = Depends(db.get_async_session)):
-    logger.info(habit_data)
-    print(habit_data)
-    time_list = habit_data.time.split(":")
-    logger.info(time_list)
-    logger.info(session)
     crud_result = await crud.add_habit(session, habit_data=habit_data)
-    logger.info(crud_result)
     if crud_result:
-        db.scheduler.add_job(send_message_test,
-                          'cron',
-                          hour=int(time_list[0]),
-                          minute=int(time_list[1]),
-                          jobstore='tg_reminder',
-                          id=str(crud_result),
-                          kwargs={
-                              'user_id': habit_data.id_telegram,
-                              'name': habit_data.name
-                          },
-                          )
-
-
-async def test_add_reminder():
-    logger.info("Успешно выполнен тест")
-    return "True"
+        add_reminder(habit_data=habit_data,
+                     crud_result=crud_result)
 
 
 @app.post("/edit_habit/name")
-async def edit_name_habit(hd_edit_name: EditHabitName,
+async def edit_name_habit(data_habit_edit_name: EditHabitName,
                           user: User = Depends(get_current_user),
                           session: Session = Depends(db.get_async_session)):
-    logger.info(hd_edit_name)
-    logger.info("edit_name_habit")
+    logger.info(data_habit_edit_name)
     edit_data = list()
-    edit_data.append(hd_edit_name.id)
-    edit_data.append(hd_edit_name.name)
+    edit_data.append(data_habit_edit_name.id)
+    edit_data.append(data_habit_edit_name.name)
     await crud.edit_habit_name(session, edit_data)
-    job = db.scheduler.get_job(job_id=str(hd_edit_name.id), jobstore='tg_reminder')
-    current_kwargs = job.kwargs
-    current_kwargs["name"] = hd_edit_name.name
-    db.scheduler.modify_job(
-                         job_id=str(hd_edit_name.id),
-                         kwargs=current_kwargs,
-                         )
+    update_name_reminder(data_habit_edit_name=data_habit_edit_name)
 
 
 @app.post("/edit_habit/time")
-async def update_time(hd_edit_time: EditTime,
+async def update_time(data_habit_edit_time: EditTime,
                       user: User = Depends(get_current_user),
                       session: Session = Depends(db.get_async_session)):
-    logger.info(hd_edit_time)
+    logger.info(data_habit_edit_time)
     logger.info("edit_time_habit")
-    time_list = hd_edit_time.time.split(':')
+    time = data_habit_edit_time.time.split(':')
     edit_data = list()
-    edit_data.append(hd_edit_time.id)
-    edit_data.append(hd_edit_time.name)
-    edit_data.append(hd_edit_time.time)
+    edit_data.append(data_habit_edit_time.id)
+    edit_data.append(data_habit_edit_time.time)
     await crud.edit_habit_time(session, edit_data)
-    db.scheduler.reschedule_job(
-                                job_id=str(hd_edit_time.id),
-                                trigger='cron',
-                                hour=int(time_list[0]),
-                                minute=int(time_list[1]),
-                                jobstore='tg_reminder',
-                                )
+    update_time_reminder(data_habit_edit_time=data_habit_edit_time,
+                         time=time)
 
 
 @app.post("/get_count")
-async def get_count_for_user(count_data: CountData,
+async def get_count_for_user(count_data: HabitId,
                              user: User = Depends(get_current_user),
                              session: Session = Depends(db.get_async_session)):
-    id_habit = await crud.get_habit_id(session,
-                                       id_telegram=count_data.user_id,
-                                       name=count_data.name)
-    get_count = await crud.get_count(session, id_habit)
+    get_count = await crud.get_count(session, count_data.id_habit)
     return get_count
 
 
 @app.post("/edit_habit/up_count")
-async def up_count(count_data: CountData,
+async def up_count(count_data: HabitId,
                    session: Session = Depends(db.get_async_session)):
     logger.info("Up count func run")
-    id_habit = await crud.get_habit_id(session,
-                                       id_telegram=count_data.user_id,
-                                       name=count_data.name)
-    get_count = await crud.get_count(session, id_habit)
+    get_count = await crud.get_count(session, count_data.id_habit)
     if get_count == COUNT_COMPLETE_HABIT:
-        await crud.delete_habit(session, id_habit=id_habit)
-        db.scheduler.remove_job(job_id=str(id_habit))
-        return True
+        habit_name = await crud.delete_habit(session, id_habit=count_data.id_habit)
+        delete_reminder(job_id=str(count_data.id_habit))
+        return JSONResponse(status_code=226, content={"habit_name": habit_name})
     logger.info(get_count)
-    await crud.edit_habit_count(session, habit_id=id_habit)
+    await crud.edit_habit_count(session, habit_id=count_data.id_habit)
     return False
 
 
-@app.get("/get_habit")
-async def add_habit(get_hab_dt: GetHabit,
+@app.get("/get_habits")
+async def add_habit(data_habit_add: GetHabits,
                     user: User = Depends(get_current_user),
                     session: Session = Depends(db.get_async_session)):
     logger.info("Получаем список привычек")
-    logger.info(get_hab_dt)
-    had_data = await crud.get_habit_by_user(session=session, user_id=get_hab_dt.id)
-    logger.info(had_data)
-    return had_data
+    logger.info(data_habit_add)
+    habit_data = await crud.get_habit_by_user(session=session,
+                                              user_id=data_habit_add.user_id)
+    logger.info(habit_data)
+    return habit_data
+
+
+@app.get("/get_name_habit")
+async def get_habit_name(habit_get_name_data: HabitId,
+                         user: User = Depends(get_current_user),
+                         session: Session = Depends(db.get_async_session)):
+    habit_name = await crud.get_name_habit(session=session,
+                                           id_habit=habit_get_name_data.id_habit)
+    logger.info(habit_name)
+    return habit_name
 
 
 @app.post("/get_habit/id")
-async def add_habit(get_hab_id: GetHabitId,
+async def add_habit(get_habit_id: GetHabitId,
                     user: User = Depends(get_current_user),
                     session: Session = Depends(db.get_async_session)):
     logger.info("Получаем ID привычки")
-    logger.info(get_hab_id)
-    had_id = await crud.get_habit_id(session=session, id_telegram=get_hab_id.id_telegram, name=get_hab_id.name)
-    logger.info(had_id)
-    return had_id
+    logger.info(get_habit_id)
+    habit_id = await crud.get_habit_id(session=session,
+                                       id_telegram=get_habit_id.id_telegram,
+                                       name=get_habit_id.name)
+    logger.info(habit_id)
+    return habit_id
 
 
 @app.delete("/get_habit/id")
-async def delete_habit(delete_hab_id: DeleteHab,
+async def delete_habit(delete_habit_id: HabitId,
                        user: User = Depends(get_current_user),
                        session: Session = Depends(db.get_async_session)):
     logger.info("Endpoint delete raw habit")
-    logger.info(delete_hab_id)
-    await crud.delete_habit(session, id_habit=delete_hab_id.id_habit)
-    db.scheduler.remove_job(job_id=str(delete_hab_id.id_habit), jobstore='tg_reminder')
+    logger.info(delete_habit_id)
+    await crud.delete_habit(session, id_habit=delete_habit_id.id_habit)
+    delete_reminder(job_id=str(delete_habit_id.id_habit))
     return True
 
 
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
+
+
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.1.1.1", port=8000, workers=4)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, workers=4)

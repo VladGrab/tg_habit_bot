@@ -1,11 +1,10 @@
-import asyncio
-from typing import List
+# import asyncio  #
 
-from sqlalchemy.dialects.postgresql import ARRAY, TIMESTAMP, JSONB
+from sqlalchemy.dialects.postgresql import TIMESTAMP
 
-from .db import engine  #
+# from .db import engine  #
 from sqlalchemy import Column, Integer, String, ForeignKey, func, Boolean
-from sqlalchemy.orm import DeclarativeBase, relationship, Mapped
+from sqlalchemy.orm import DeclarativeBase
 
 
 class Base(DeclarativeBase):
@@ -37,9 +36,9 @@ class Habit(Base):
     def get_id(self):
         return self.id
 
-
-async def create_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+#
+# async def create_tables():
+#     async with engine.begin() as conn:
+#         await conn.run_sync(Base.metadata.create_all)
+#
 # asyncio.run(create_tables())

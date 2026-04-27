@@ -7,7 +7,6 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_VIRTUALENVS_CREATE=false \
     POETRY_NO_INTERACTION=1 \
     POETRY_VERSION=1.7.1
-
 RUN pip install "poetry==2.3.3"
 COPY pyproject.toml poetry.lock ./
 RUN poetry install

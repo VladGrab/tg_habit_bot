@@ -1,0 +1,1 @@
+CREATE DATABASE habit_bot_tg;

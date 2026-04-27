@@ -10,8 +10,8 @@ class AddHabit(BaseModel):
     time: str
 
 
-class GetHabit(BaseModel):
-    id: int
+class GetHabits(BaseModel):
+    user_id: int
 
 
 class UserData(BaseModel):
@@ -33,16 +33,10 @@ class EditHabitName(BaseModel):
 
 class EditTime(BaseModel):
     id: int
-    name: str
     time: str
 
 
-class DeleteHab(BaseModel):
+class HabitId(BaseModel):
     id_habit: int
-
-
-class CountData(BaseModel):
-    user_id: int
-    name: str
 
 

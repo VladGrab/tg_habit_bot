@@ -65,13 +65,18 @@ async def add_habit(session, habit_data):
 
 async def get_habit_by_user(session, user_id):
     p_user_id = await get_user_id(session, user_id)
-    query = select(Habit.name, Habit.time).where(Habit.user_id == p_user_id)
-    # res = await session.execute(
-    #     select(Habit.name, Habit.time).where(Habit.user_id == p_user_id)
-    # )
+    query = select(Habit.id, Habit.name, Habit.time).where(Habit.user_id == p_user_id)
     res = await session.execute(query)
     habit_raw = res.mappings().all()
     return habit_raw
+
+
+async def get_name_habit(session, id_habit):
+    query = select(Habit.name).where(Habit.id == id_habit)
+    res = await session.execute(query)
+    habit_name_raw = res.scalars().first()
+    # habit_name = habit_name_raw.name
+    return habit_name_raw
 
 
 async def edit_habit_name(session, edit_data):
@@ -88,8 +93,8 @@ async def edit_habit_name(session, edit_data):
 async def edit_habit_time(session, edit_data):
     query = (
         update(Habit)
-        .where(Habit.id == edit_data[0] and Habit.name == edit_data[1])
-        .values(time=edit_data[2])
+        .where(Habit.id == edit_data[0])
+        .values(time=edit_data[1])
         .execution_options(synchronize_session="fetch")  # Обновляет объект в сессии
     )
     await session.execute(query)
@@ -116,6 +121,10 @@ async def edit_habit_count(session, habit_id):
 
 
 async def delete_habit(session, id_habit):
+    query = select(Habit.name).where(Habit.id == id_habit)
+    res = await session.execute(query)
+    habit_name_raw = res.scalars().first()
     await session.execute(delete(Habit).where(Habit.id == id_habit))
     await session.commit()
+    return habit_name_raw
 
